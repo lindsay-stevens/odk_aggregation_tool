@@ -1,0 +1,5 @@
+xlrd==1.0.0
+-e git+https://github.com/lindsay-stevens/xmltodict.git@ordered-children-short-tags#egg=xmltodict
+-e .
+
+pyinstaller==3.2
