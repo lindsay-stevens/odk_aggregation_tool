@@ -3,6 +3,7 @@ from collections import OrderedDict, namedtuple
 from datetime import datetime
 from odk_aggregation_tool.aggregation import readers
 import xmltodict
+from operator import eq
 
 ODictList = List[OrderedDict]
 
@@ -69,10 +70,9 @@ def value_label(label_value: str, label_text: str) -> OrderedDict:
 
 
 def value_label_collection(val_lab_name: str, choices: ODictList,
-                           language: str) -> OrderedDict:
+                           label_column: str) -> OrderedDict:
     """Prepare a Stata XML value label (vallab) collection of labels (label)."""
-    column = 'label::{0}'.format(language)
-    choice_list = [value_label(x['name'], x[column]) for x in choices]
+    choice_list = [value_label(x['name'], x[label_column]) for x in choices]
     return OrderedDict([
         ('@name', val_lab_name),
         ('label', choice_list)
@@ -147,46 +147,12 @@ def to_stata_xml(xlsform_path, instances_path):
     :param instances_path: where the instance XML files are kept.
     :return Stata XML document, for writing to a file or further processing
     """
-    read_xlsforms = list(
-        readers.read_xlsform_definitions(root_dir=xlsform_path))
-    sorted_xlsforms = sorted(
-        read_xlsforms, key=lambda x: x['@settings']['version'])
-
-    master_xlsforms = OrderedDict()
-    for xlsform in sorted_xlsforms:
-        for k, v in xlsform.items():
-            v['default_language'] = xlsform['@settings']['default_language']
-            if v.get('type') not in ['begin group', 'end group', None]:
-                master_xlsforms[k] = v
-
-    type_list = list()
-    var_list = list()
-    fmt_list = list()
-    lbl_list = list()
-    variable_labels = list()
-    value_labels = list()
-
-    for k, v in master_xlsforms.items():
-        var_type = v.get('type', '')
-        if var_type.startswith('select'):
-            choices_name = var_type.split(' ')[1]
-            lbl_list.append(value_label_map(
-                var_name=k, choices_name=choices_name))
-            value_labels.append(value_label_collection(
-                val_lab_name=choices_name, choices=v.get('choices', []),
-                language=v.get('default_language', '')))
-            var_type = 'integer'
-        type_mapping = next(
-            (x for x in type_mappings if x.xlsform_type == var_type), '')
-        var_list.append(variable_name(var_name=k))
-        type_list.append(variable_type(
-            var_name=k, stata_type=type_mapping.stata_type))
-        fmt_list.append(variable_format(
-            var_name=k, stata_fmt=type_mapping.stata_fmt))
-        variable_labels.append(variable_label(
-            var_name=k, description=v.get('name_description', '')))
+    form_defs = collate_xlsforms_by_form_id(xlsform_path=xlsform_path)
+    for form in form_defs:
+        form["metadata"] = prepare_xlsform_metadata(form_def=form)
 
     read_instances = list(readers.read_xml_files(root_dir=instances_path))
+
     parsed = [xmltodict.parse(x) for x in read_instances]
     flattened = [readers.flatten_dict_leaf_nodes(x) for x in parsed]
     observations = list()
@@ -203,3 +169,62 @@ def to_stata_xml(xlsform_path, instances_path):
 
     xml_document = xmltodict.unparse(final_doc)
     return xml_document
+
+
+def collate_xlsforms_by_form_id(xlsform_path):
+
+    read_xlsforms = list(
+        readers.read_xlsform_definitions(root_dir=xlsform_path))
+    unique_form_ids = set(x["@settings"]["form_id"] for x in read_xlsforms)
+    form_dict = dict()
+    for form_id in unique_form_ids:
+        form_defs = [x for x in read_xlsforms
+                     if eq(x["@settings"]["form_id"], form_id)]
+        sorted_form_defs = sorted(form_defs, key=lambda x: x['@settings']['version'])
+        master_form_def = OrderedDict()
+        for xlsform in sorted_form_defs:
+            for k, v in xlsform.items():
+                v['default_language'] = xlsform['@settings']['default_language']
+                if v.get('type') not in ['begin group', 'end group', None]:
+                    master_form_def[k] = v
+        form_dict[form_id] = master_form_def
+
+    return form_dict
+
+
+def prepare_xlsform_metadata(form_def):
+
+    metadata = dict(var_types=list(), var_names=list(), var_formats=list(),
+                    var_choices=list(), var_labels=list(), value_labels=list())
+
+    for k, v in form_def.items():
+        var_type = v.get('type', '')
+        label_column = maybe_default_language(
+            metadata_name='label', variable_dict=v)
+        if var_type.startswith('select'):
+            choices_name = var_type.split(' ')[1]
+            metadata["var_choices"].append(value_label_map(
+                var_name=k, choices_name=choices_name))
+            metadata["value_labels"].append(value_label_collection(
+                val_lab_name=choices_name, choices=v.get('choices', []),
+                label_column=label_column))
+            var_type = 'integer'
+        type_mapping = next(
+            (x for x in type_mappings if x.xlsform_type == var_type), '')
+        metadata["var_names"].append(variable_name(var_name=k))
+        metadata["var_types"].append(variable_type(
+            var_name=k, stata_type=type_mapping.stata_type))
+        metadata["var_formats"].append(variable_format(
+            var_name=k, stata_fmt=type_mapping.stata_fmt))
+        v.get('default_language', '')
+        metadata["var_labels"].append(variable_label(
+            var_name=k, description=v.get('name_description', label_column)))
+    return metadata
+
+
+def maybe_default_language(metadata_name, variable_dict):
+    default_lang = variable_dict.get('default_language', None)
+    maybe_lang = ''
+    if default_lang is not None:
+        '::{0}'.format(default_lang)
+    return '{0}{1}'.format(metadata_name, maybe_lang)
