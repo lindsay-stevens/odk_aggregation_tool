@@ -1,0 +1,65 @@
+<?xml version="1.0"?>
+<h:html xmlns="http://www.w3.org/2002/xforms" xmlns:ev="http://www.w3.org/2001/xml-events" xmlns:h="http://www.w3.org/1999/xhtml" xmlns:jr="http://openrosa.org/javarosa" xmlns:orx="http://openrosa.org/xforms" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <h:head>
+    <h:title>An XLSForm</h:title>
+    <model>
+      <instance>
+        <xlsform_v_a1 id="xlsform" version="a1">
+          <var_i/>
+          <var_d/>
+          <var_c/>
+          <var_t/>
+          <var_c2/>
+          <meta>
+            <instanceID/>
+            <instanceName/>
+          </meta>
+        </xlsform_v_a1>
+      </instance>
+      <bind nodeset="/xlsform_v_a1/var_i" type="int"/>
+      <bind nodeset="/xlsform_v_a1/var_d" type="date"/>
+      <bind nodeset="/xlsform_v_a1/var_c" type="select1"/>
+      <bind nodeset="/xlsform_v_a1/var_t" type="string"/>
+      <bind nodeset="/xlsform_v_a1/var_c2" type="select1"/>
+      <bind calculate="concat('uuid:', uuid())" nodeset="/xlsform_v_a1/meta/instanceID" readonly="true()" type="string"/>
+      <bind calculate="uuid()" nodeset="/xlsform_v_a1/meta/instanceName" type="string"/>
+    </model>
+  </h:head>
+  <h:body>
+    <input ref="/xlsform_v_a1/var_i">
+      <label>How many can you even?</label>
+    </input>
+    <input ref="/xlsform_v_a1/var_d">
+      <label>When did you even?</label>
+    </input>
+    <select1 ref="/xlsform_v_a1/var_c">
+      <label>What is your favourite colour?</label>
+      <item>
+        <label>Blue</label>
+        <value>1</value>
+      </item>
+      <item>
+        <label>Orange</label>
+        <value>2</value>
+      </item>
+      <item>
+        <label>Yellow</label>
+        <value>3</value>
+      </item>
+    </select1>
+    <input ref="/xlsform_v_a1/var_t">
+      <label>Describe the colour blue.</label>
+    </input>
+    <select1 ref="/xlsform_v_a1/var_c2">
+      <label>Do you like writing tests very much?</label>
+      <item>
+        <label>Yes</label>
+        <value>1</value>
+      </item>
+      <item>
+        <label>No</label>
+        <value>0</value>
+      </item>
+    </select1>
+  </h:body>
+</h:html>

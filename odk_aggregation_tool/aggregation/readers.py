@@ -1,54 +1,73 @@
 import os
 import xlrd
+from xlrd import XLRDError
+from xlrd.book import Book
 from collections import OrderedDict
+from typing import Iterable
+import logging
+
+logger = logging.getLogger(__name__)
+logger.addHandler(logging.StreamHandler())
+logger.setLevel("INFO")
 
 
-def read_xml_files(root_dir):
-    """
-    Read all XML files located in the root_dir and it's sub-folders.
-
-    :param root_dir: Path to search in.
-    :type root_dir: str
-    :return: iterator of xml files.
-    """
+def read_xml_files(root_dir: str) -> Iterable[str]:
+    """Read instance XML files found recursively in root_dir."""
     for entry in os.scandir(path=root_dir):
         if entry.is_dir():
             yield from read_xml_files(root_dir=entry.path)
         elif entry.name.endswith(".xml"):
-            with open(entry.path, mode='r') as f:
+            with open(entry.path, mode='r', encoding="UTF-8") as f:
                 xml_file = f.read()
             yield xml_file
 
 
-def read_xlsform_definitions(root_dir):
-    """
-    Read survey definitions from all XLSX files located in the root_dir.
-
-    :param root_dir: Path to search in.
-    :type root_dir: str.
-    :return: list of dicts containing XLSForm survey definitions with choices.
-    """
+def read_xlsform_definitions(root_dir: str) -> Iterable[str]:
+    """Read XLSX files found recursively in root_dir"""
+    error_text = "Encountered an error while trying to read the XLSX file " \
+                 "at the following path, and did not read from it: {0}.\n" \
+                 "Error message was: {1}\n"
     for entry in os.scandir(path=root_dir):
         if entry.is_dir():
             yield from read_xlsform_definitions(root_dir=entry.path)
         elif entry.name.endswith(".xlsx"):
-            workbook = xlrd.open_workbook(filename=entry.path)
-            survey = xlrd_sheet_to_list_of_dict(
-                    workbook.sheet_by_name(sheet_name='survey'))
-            choices = xlrd_sheet_to_list_of_dict(
-                    workbook.sheet_by_name(sheet_name='choices'))
-            settings = xlrd_sheet_to_list_of_dict(
-                workbook.sheet_by_name(sheet_name='settings'))
-            form_def = OrderedDict()
-            form_def['@settings'] = settings[0]
-            for item in survey:
-                if item['type'].startswith('select'):
-                    select_type, choice_name = item['type'].split(' ')
-                    choice_list = [x for x in choices
-                                   if x['list_name'] == choice_name]
-                    item['choices'] = choice_list
-                form_def[item['name']] = item
-            yield form_def
+            try:
+                workbook = xlrd.open_workbook(filename=entry.path)
+                form_def = read_xlsform_data(workbook=workbook)
+            except XLRDError as xle:
+                logger.info(error_text.format(entry.path, str(xle)))
+                continue
+            except ValueError as ve:
+                logger.info(error_text.format(entry.path, str(ve)))
+                continue
+            else:
+                yield form_def
+
+
+def read_xlsform_data(workbook: Book) -> OrderedDict:
+    """Return XLSForm definition data read from an XLRD Workbook."""
+    sheets = {x.name for x in workbook.sheets()}
+    required = {"survey", "choices", "settings"}
+    if not required.issubset(sheets):
+        raise ValueError(
+            "The required sheets for an XLSForm definition ({0}) were not "
+            "found in the workbook sheets ({1}).".format(required, sheets))
+    survey = xlrd_sheet_to_list_of_dict(
+        workbook.sheet_by_name(sheet_name='survey'))
+    choices = xlrd_sheet_to_list_of_dict(
+            workbook.sheet_by_name(sheet_name='choices'))
+    settings = xlrd_sheet_to_list_of_dict(
+        workbook.sheet_by_name(sheet_name='settings'))
+    form_def = OrderedDict()
+    form_def['@settings'] = settings[0]
+    for item in survey:
+        if item['type'].startswith('select'):
+            select_type, choice_name = item['type'].split(' ')
+            choice_list = [x for x in choices
+                           if x['list_name'] == choice_name]
+            item['choices'] = choice_list
+        form_def[item['name']] = item
+    return form_def
 
 
 def xlrd_sheet_to_list_of_dict(sheet):
@@ -68,22 +87,13 @@ def xlrd_sheet_to_list_of_dict(sheet):
     return dict_list
 
 
-def flatten_dict_leaf_nodes(dict_in, dict_out=None):
-    """
-    Flatten leaf nodes of a nested and/or list of dicts into a single dict.
-
-    :param dict_in: Dictionary containing nested and/or list of dicts.
-    :type dict_in: dict
-    :param dict_out: Dictionary to add key/values to, a new dict is made
-        and returned if this parameter is not provided.
-    :type dict_out: dict
-    :return: Single-level dictionary containing leaf node values.
-    :rtype: dict
-    """
+def flatten_dict_leaf_nodes(dict_in: OrderedDict,
+                            dict_out: OrderedDict = None) -> OrderedDict:
+    """Flatten nested leaves of and/or a list of OrderedDict into one level."""
     if dict_out is None:
         dict_out = OrderedDict()
     for k, v in dict_in.items():
-        if isinstance(v, dict):
+        if isinstance(v, OrderedDict):
             flatten_dict_leaf_nodes(v, dict_out)
         elif isinstance(v, list):
             for i in v:

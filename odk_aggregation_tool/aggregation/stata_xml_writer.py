@@ -1,11 +1,16 @@
-from typing import List
+from typing import List, Union, Dict
 from collections import OrderedDict, namedtuple
 from datetime import datetime
 from odk_aggregation_tool.aggregation import readers
 import xmltodict
 from operator import eq
+from copy import copy
+import logging
 
+logger = logging.getLogger(__name__)
+logger.addHandler(logging.NullHandler())
 ODictList = List[OrderedDict]
+ODictDict = Dict[str, OrderedDict]
 
 
 type_map = namedtuple('TypeMap', ['xlsform_type', 'stata_type', 'stata_fmt'])
@@ -87,13 +92,10 @@ def observation_value(var_name: str, var_value: str) -> OrderedDict:
     ])
 
 
-def compose_xml(variable_types: ODictList,
-                variable_names: ODictList,
-                variable_formats: ODictList,
-                value_label_maps: ODictList,
-                variable_labels: ODictList,
-                value_labels: ODictList,
-                observation_values: ODictList) -> OrderedDict:
+def compose_xml(var_types: ODictList, var_names: ODictList,
+                var_formats: ODictList, var_labels: ODictList,
+                var_vallabel_map: ODictList, value_labels: ODictList,
+                observations: ODictList, nvar: str, nobs: str) -> OrderedDict:
     """Prepare a final Stata XML document."""
     return OrderedDict([
         ('dta', OrderedDict([
@@ -101,35 +103,35 @@ def compose_xml(variable_types: ODictList,
                 ('ds_format', '113'),
                 ('byteorder', 'LOHI'),
                 ('filetype', '1'),
-                ('nvar', str(len(variable_names))),
-                ('nobs', str(len(observation_values))),
-                ('data_label', 'Data from Python'),
+                ('nvar', nvar),
+                ('nobs', nobs),
+                ('data_label', 'ODK data from Python'),
                 ('time_stamp', datetime.now().strftime("%d %b %Y %H:%M"))
             ])),
             ('descriptors', OrderedDict([
                 ('typelist', OrderedDict([
-                    ('type', variable_types)
+                    ('type', var_types)
                 ])),
                 ('varlist', OrderedDict([
-                    ('variable', variable_names)
+                    ('variable', var_names)
                 ])),
                 ('srtlist', None),
                 ('fmtlist', OrderedDict([
-                    ('fmt', variable_formats)
+                    ('fmt', var_formats)
                 ])),
                 ('lbllist', OrderedDict([
-                    ('lblname', value_label_maps)
+                    ('lblname', var_vallabel_map)
                 ]))
             ])),
             ('variable_labels', [
                 OrderedDict([
-                    ('vlabel', variable_labels)
+                    ('vlabel', var_labels)
                 ]),
             ]),
             ('expansion', None),
             ('data', [
                 OrderedDict([
-                    ('o', observation_values)
+                    ('o', observations)
                 ])
             ]),
             ('value_labels', OrderedDict([
@@ -139,75 +141,85 @@ def compose_xml(variable_types: ODictList,
     ])
 
 
-def to_stata_xml(xlsform_path, instances_path):
-    """
-    Build a Stata XML document from the XLSForms and instance XML data.
-
-    :param xlsform_path: where the XLSForm files are kept.
-    :param instances_path: where the instance XML files are kept.
-    :return Stata XML document, for writing to a file or further processing
-    """
+def to_stata_xml(xlsform_path: str, instances_path: str) -> Dict[str, str]:
+    """Return Stata XML documents for all discovered XLSForms and XML data."""
     form_defs = collate_xlsforms_by_form_id(xlsform_path=xlsform_path)
-    for form in form_defs:
-        form["metadata"] = prepare_xlsform_metadata(form_def=form)
-
     read_instances = list(readers.read_xml_files(root_dir=instances_path))
-
     parsed = [xmltodict.parse(x) for x in read_instances]
     flattened = [readers.flatten_dict_leaf_nodes(x) for x in parsed]
-    observations = list()
-    for instance in flattened:
-        var_values = list()
-        for k, v in instance.items():
-            if k in [x['@varname'] for x in var_list]:
-                var_values.append(observation_value(var_name=k, var_value=v))
-        observations.append(OrderedDict([('v', var_values)]))
 
-    final_doc = compose_xml(
-        type_list, var_list, fmt_list, lbl_list, variable_labels,
-        value_labels, observations)
+    stata_docs = dict()
+    for form_id, form_def in form_defs.items():
+        stata_metadata = prepare_xlsform_metadata(form_def=form_def)
+        xform_instances = [x for x in flattened if eq(x["@id"], form_id)]
+        variable_names = [x["@varname"] for x in stata_metadata["var_names"]]
+        nvar = str(len(variable_names))
+        logger.info("Collecting data for {0} "
+                    "variables for form: {1}".format(nvar, form_id))
+        observations = prepare_xform_data(
+            xform_instances=xform_instances, variable_names=variable_names)
+        nobs = str(len(observations))
+        logger.info("Collected data for {0} "
+                    "observations for form: {1}".format(nobs, form_id))
+        stata_doc = compose_xml(
+            observations=observations, nvar=nvar, nobs=nobs, **stata_metadata)
+        stata_docs[form_id] = xmltodict.unparse(stata_doc)
 
-    xml_document = xmltodict.unparse(final_doc)
-    return xml_document
+    return stata_docs
 
 
-def collate_xlsforms_by_form_id(xlsform_path):
-
+def collate_xlsforms_by_form_id(xlsform_path: str) -> ODictDict:
+    """Return discovered form def metadata, from last of sorted versions."""
+    logger.info("Reading XLSForms.")
     read_xlsforms = list(
         readers.read_xlsform_definitions(root_dir=xlsform_path))
     unique_form_ids = set(x["@settings"]["form_id"] for x in read_xlsforms)
+    logger.info("Found the following XLSForms: {0}".format(unique_form_ids))
+
     form_dict = dict()
     for form_id in unique_form_ids:
         form_defs = [x for x in read_xlsforms
                      if eq(x["@settings"]["form_id"], form_id)]
-        sorted_form_defs = sorted(form_defs, key=lambda x: x['@settings']['version'])
+        sorted_form_defs = sorted(
+            form_defs, key=lambda x: x["@settings"]["version"])
         master_form_def = OrderedDict()
+
         for xlsform in sorted_form_defs:
+            if master_form_def.get("@settings") is None:
+                master_form_def["@settings"] = xlsform["@settings"]
             for k, v in xlsform.items():
-                v['default_language'] = xlsform['@settings']['default_language']
-                if v.get('type') not in ['begin group', 'end group', None]:
+                if v.get("type") not in ["begin group", "end group", None]:
                     master_form_def[k] = v
         form_dict[form_id] = master_form_def
 
+        logging.info("Default language for form {0}: {1}".format(
+            form_id, master_form_def["@settings"].get("default_language")))
     return form_dict
 
 
-def prepare_xlsform_metadata(form_def):
+def prepare_xlsform_metadata(form_def: OrderedDict) -> ODictDict:
+    """Return Stata metadata for the default language for each form item."""
+    metadata = dict(
+        var_types=list(), var_names=list(), var_formats=list(),
+        var_labels=list(), var_vallabel_map=list(), value_labels=list())
+    form_def_items = copy(form_def)
+    form_def_items.pop("@settings")
+    form_default_lang = form_def["@settings"].get("default_language")
 
-    metadata = dict(var_types=list(), var_names=list(), var_formats=list(),
-                    var_choices=list(), var_labels=list(), value_labels=list())
-
-    for k, v in form_def.items():
+    choices_added = list()
+    for k, v in form_def_items.items():
         var_type = v.get('type', '')
-        label_column = maybe_default_language(
-            metadata_name='label', variable_dict=v)
+        label_column = maybe_language_column(
+            metadata_name='label', language_name=form_default_lang)
         if var_type.startswith('select'):
             choices_name = var_type.split(' ')[1]
-            metadata["var_choices"].append(value_label_map(
+            metadata["var_vallabel_map"].append(value_label_map(
                 var_name=k, choices_name=choices_name))
-            metadata["value_labels"].append(value_label_collection(
-                val_lab_name=choices_name, choices=v.get('choices', []),
-                label_column=label_column))
+            if choices_name not in choices_added:
+                metadata["value_labels"].append(value_label_collection(
+                    val_lab_name=choices_name, choices=v.get('choices', []),
+                    label_column=label_column))
+                choices_added.append(choices_name)
             var_type = 'integer'
         type_mapping = next(
             (x for x in type_mappings if x.xlsform_type == var_type), '')
@@ -216,15 +228,30 @@ def prepare_xlsform_metadata(form_def):
             var_name=k, stata_type=type_mapping.stata_type))
         metadata["var_formats"].append(variable_format(
             var_name=k, stata_fmt=type_mapping.stata_fmt))
-        v.get('default_language', '')
+        label_column_value = v.get(label_column)
         metadata["var_labels"].append(variable_label(
-            var_name=k, description=v.get('name_description', label_column)))
+            var_name=k, description=v.get(
+                'name_description', label_column_value)))
     return metadata
 
 
-def maybe_default_language(metadata_name, variable_dict):
-    default_lang = variable_dict.get('default_language', None)
+def maybe_language_column(metadata_name: str,
+                          language_name: Union[str, None]) -> str:
+    """Return a language-specific column name if the language isn't None."""
     maybe_lang = ''
-    if default_lang is not None:
-        '::{0}'.format(default_lang)
+    if language_name is not None:
+        maybe_lang = '::{0}'.format(language_name)
     return '{0}{1}'.format(metadata_name, maybe_lang)
+
+
+def prepare_xform_data(xform_instances: ODictList,
+                       variable_names: List) -> ODictList:
+    """Return a list of observation values filtered for the named variables."""
+    observations = list()
+    for instance in xform_instances:
+        var_values = list()
+        for k, v in instance.items():
+            if k in variable_names:
+                var_values.append(observation_value(var_name=k, var_value=v))
+        observations.append(OrderedDict([('v', var_values)]))
+    return observations
