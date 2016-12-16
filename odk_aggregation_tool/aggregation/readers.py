@@ -2,13 +2,13 @@ import os
 import xlrd
 from xlrd import XLRDError
 from xlrd.book import Book
+from xlrd.sheet import Sheet
 from collections import OrderedDict
-from typing import Iterable
+from typing import Iterable, List, Dict
 import logging
 
 logger = logging.getLogger(__name__)
-logger.addHandler(logging.StreamHandler())
-logger.setLevel("INFO")
+logger.addHandler(logging.NullHandler())
 
 
 def read_xml_files(root_dir: str) -> Iterable[str]:
@@ -22,7 +22,7 @@ def read_xml_files(root_dir: str) -> Iterable[str]:
             yield xml_file
 
 
-def read_xlsform_definitions(root_dir: str) -> Iterable[str]:
+def read_xlsform_definitions(root_dir: str) -> Iterable[OrderedDict]:
     """Read XLSX files found recursively in root_dir"""
     error_text = "Encountered an error while trying to read the XLSX file " \
                  "at the following path, and did not read from it: {0}.\n" \
@@ -70,14 +70,8 @@ def read_xlsform_data(workbook: Book) -> OrderedDict:
     return form_def
 
 
-def xlrd_sheet_to_list_of_dict(sheet):
-    """
-    Convert an xlrd sheet into a list of dicts.
-
-    :param sheet: The xlrd sheet to process.
-    :type sheet: xlrd.sheet.Sheet
-    :return: list of dicts.
-    """
+def xlrd_sheet_to_list_of_dict(sheet: Sheet) -> List[Dict]:
+    """Convert an xlrd sheet into a list of dicts."""
     keys = [sheet.cell(0, col_index).value for col_index in range(sheet.ncols)]
     dict_list = []
     for row_index in range(1, sheet.nrows):

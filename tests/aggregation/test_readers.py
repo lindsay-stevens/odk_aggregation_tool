@@ -54,14 +54,18 @@ class TestODKInstanceAggregate(unittest.TestCase):
         observed = readers.flatten_dict_leaf_nodes(input_dict)
         self.assertDictEqual(OrderedDict(expected), observed)
 
-    def test_read_xlsform_definitions_handles_bad_xlsx_file(self):
+    def test_read_xlsform_definitions_handles_phony_xlsx(self):
         """Should not choke on invalid XLSX files."""
         logger_name = "odk_aggregation_tool.aggregation.readers"
         with self.assertLogs(logger=logger_name, level="INFO") as logs:
             list(readers.read_xlsform_definitions(
-                root_dir=self.fixtures.files["xlsform_phony"]))
-        self.assertIn("invalid XLSX", logs.output[0])
+                root_dir=self.fixtures.files["xlsform_with_phony"]))
+        self.assertIn("Unsupported format", logs.output[0])
 
-    def test_read_xlsform_definitions_handles_non_xlsform_xlsx_files(self):
-        # TODO: add test fixture and test for this
-        pass
+    def test_read_xlsform_definitions_handles_plain_xlsx(self):
+        """Should not choke on XLSX files that aren't XLSForms"""
+        logger_name = "odk_aggregation_tool.aggregation.readers"
+        with self.assertLogs(logger=logger_name, level="INFO") as logs:
+            list(readers.read_xlsform_definitions(
+                root_dir=self.fixtures.files["xlsform_with_plain_xlsx"]))
+        self.assertIn("required sheets for an XLSForm", logs.output[0])
