@@ -20,19 +20,19 @@ class CapturingHandler(logging.Handler):
     my_logger.removeHandler(hdlr=capture_handler)
     """
 
-    def __init__(self, logger):
+    def __init__(self, logger, name=None):
         logging.Handler.__init__(self)
         _LoggingWatcher = collections.namedtuple(
             "_LoggingWatcher", ["records", "output"])
         self.watcher = _LoggingWatcher([], [])
-
-        # TODO: not working yet but should avoid adding handlers more than once
-        existing_capturing_handlers = 0
-        for handler in logger.handlers:
-            if type(handler) == CapturingHandler:
-                existing_capturing_handlers += 1
-        if existing_capturing_handlers == 0:
+        if name is not None:
+            self.name = name
+        existing_capture = [x for x in logger.handlers if x.name == name]
+        if len(existing_capture) == 0:
             logger.addHandler(self)
+        else:
+            logger.info("Skipped adding handler '{0}', a logging handler "
+                        "with the same name is already attached.".format(name))
 
     def flush(self):
         pass

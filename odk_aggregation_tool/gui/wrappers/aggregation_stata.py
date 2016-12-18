@@ -19,13 +19,12 @@ def wrapper(xlsforms_path, xforms_path, output_path):
         stata_log = logging.getLogger(
             "odk_aggregation_tool.aggregation.readers")
         stata_log.setLevel("DEBUG")
-        stata_capture = CapturingHandler(logger=stata_log)
+        stata_capture = CapturingHandler(logger=stata_log, name="stata_capture")
         reader_log = logging.getLogger(
             "odk_aggregation_tool.aggregation.to_stata_xml")
         reader_log.setLevel("DEBUG")
-        reader_capture = CapturingHandler(logger=reader_log)
-
-        # TODO: not capturing logs from the to_stata_xml logger :(
+        reader_capture = CapturingHandler(
+            logger=reader_log, name="reader_capture")
 
         stata_docs = to_stata_xml.to_stata_xml(
             xlsform_path=valid_xlsform_path, instances_path=valid_xforms_path)
