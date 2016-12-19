@@ -4,14 +4,14 @@ from xlrd import XLRDError
 from xlrd.book import Book
 from xlrd.sheet import Sheet
 from collections import OrderedDict
-from typing import Iterable, List, Dict
+from typing import Iterable, List, Dict, Tuple
 import logging
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
 
-def read_xml_files(root_dir: str) -> Iterable[str]:
+def read_xml_files(root_dir: str) -> Iterable[Tuple[str, str]]:
     """Read instance XML files found recursively in root_dir."""
     for entry in os.scandir(path=root_dir):
         if entry.is_dir():
@@ -19,7 +19,7 @@ def read_xml_files(root_dir: str) -> Iterable[str]:
         elif entry.name.endswith(".xml"):
             with open(entry.path, mode='r', encoding="UTF-8") as f:
                 xml_file = f.read()
-            yield xml_file
+            yield xml_file, entry.path
 
 
 def read_xlsform_definitions(root_dir: str) -> Iterable[OrderedDict]:

@@ -15,8 +15,8 @@ class TestGenerateImages(unittest.TestCase):
         xforms_path = self.fixtures.files["instances"]
         output_path = self.fixtures.dir
 
-        mock_write = 'odk_aggregation_tool.gui.wrappers' \
-                     '.aggregation_stata.write_stata_docs'
+        mock_write = 'odk_aggregation_tool.aggregation' \
+                     '.to_stata_xml.write_stata_docs'
         with patch(mock_write, MagicMock()):
             observed = aggregation_stata.wrapper(
                 xlsforms_path=xlsforms_path, xforms_path=xforms_path,

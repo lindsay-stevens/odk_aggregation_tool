@@ -2,15 +2,18 @@ import unittest
 import logging
 from odk_aggregation_tool.gui.log_capturing_handler import CapturingHandler
 
+test_logger = logging.getLogger(__name__)
+test_logger.addHandler(logging.NullHandler())
+test_logger.setLevel("INFO")
+test_logger.propagate = False
+
 
 class TestCapturingHandler(unittest.TestCase):
     """Tests for the CapturingHandler class."""
 
     def test_capture_handler_output(self):
         """Should return list of log messages."""
-        test_logger = logging.getLogger("my_test_logger")
-        test_logger.setLevel("INFO")
-        capture = CapturingHandler(logger=test_logger)
+        capture = CapturingHandler(logger=test_logger, name=__name__)
         messages = ["first message", "this is a second message"]
         test_logger.warning(messages[0])
         test_logger.info(messages[1])
@@ -19,10 +22,9 @@ class TestCapturingHandler(unittest.TestCase):
 
     def test_capturing_handler_avoids_duplicate_name(self):
         """Should skip adding a duplicate handler name and log a message."""
-        test_logger = logging.getLogger("my_test_logger")
-        test_logger.setLevel("INFO")
-        capture = CapturingHandler(logger=test_logger, name="my_logger")
-        CapturingHandler(logger=test_logger, name="my_logger")
-        message = "Skipped adding handler 'my_logger'"
+        capture = CapturingHandler(logger=test_logger, name=__name__)
+        CapturingHandler(logger=test_logger, name=__name__)
+        message = "Skipped adding handler"
         self.assertIn(message, capture.watcher.output[0])
-        self.assertEqual(test_logger.handlers, [capture])
+        self.assertIn(capture, test_logger.handlers)
+        self.assertEqual(2, len(test_logger.handlers))
