@@ -20,22 +20,6 @@ A Python GUI app for:
 The specifications document at [specs/specs.md](specs/specs.md) goes in to more detail on the features, overall design and background.
 
 
-# Todo
-Remaining:
-
-- Prototype code amendments:
-    - Split form processing to produce separate Stata XML per form def
-    - Break down to_stata_xml into smaller, testable pieces
-    - Add more cautious error handling so that resolutions can be suggested
-- Copy over ODK Tools GUI components for the UI / tk / pyinstaller things
-- Prepare UAT materials
-- Write user guide
-
-Completed:
-
-- Write specs
-- Copy in the ODK Tools GUI project structural bits
-- Copy in the prototype code
 
 
 # Development Environment

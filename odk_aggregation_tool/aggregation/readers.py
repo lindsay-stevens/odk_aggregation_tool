@@ -6,6 +6,7 @@ from xlrd.sheet import Sheet
 from collections import OrderedDict
 from typing import Iterable, List, Dict, Tuple
 import logging
+import traceback
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
@@ -35,10 +36,12 @@ def read_xlsform_definitions(root_dir: str) -> Iterable[OrderedDict]:
                 workbook = xlrd.open_workbook(filename=entry.path)
                 form_def = read_xlsform_data(workbook=workbook)
             except XLRDError as xle:
-                logger.info(error_text.format(entry.path, str(xle)))
+                logger.info(error_text.format(entry.path, "{0}\n\n{1}".format(
+                    str(xle), ''.join(traceback.format_exc()))))
                 continue
             except ValueError as ve:
-                logger.info(error_text.format(entry.path, str(ve)))
+                logger.info(error_text.format(entry.path, "{0}\n\n{1}".format(
+                    str(ve), ''.join(traceback.format_exc()))))
                 continue
             else:
                 yield form_def
@@ -88,7 +91,10 @@ def flatten_dict_leaf_nodes(dict_in: OrderedDict,
         dict_out = OrderedDict()
     for k, v in dict_in.items():
         if isinstance(v, OrderedDict):
-            flatten_dict_leaf_nodes(v, dict_out)
+            if "#text" in v.keys():
+                dict_out[k] = v["#text"]
+            else:
+                flatten_dict_leaf_nodes(v, dict_out)
         elif isinstance(v, list):
             for i in v:
                 flatten_dict_leaf_nodes(i, dict_out)

@@ -142,14 +142,66 @@ class TestStataXMLWriter(unittest.TestCase):
         self.assertIn("Found duplicate", logs.output[0])
         self.assertEqual(4, len(observed))
 
-    def test_prepare_xlsform_metadata_skips_labelling_variable(self):
-        """Should skip readonly text variables whose name starts with 'nl_'."""
-        xlsform = to_stata_xml.collate_xlsforms_by_form_id(
-            xlsform_path=self.fixtures.files["xlsform_label_variable"])
-        logger_name = "odk_aggregation_tool.aggregation"
-        with self.assertLogs(logger=logger_name, level="INFO") as logs:
-            observed = to_stata_xml.prepare_xlsform_metadata(
-                form_def=xlsform["xlsform"], form_id="xlsform")
-        self.assertIn("Skipped adding", "\n".join(logs.output))
-        var_names = {x.get("@varname") for x in observed["var_names"]}
-        self.assertNotIn("nl_welcome", var_names)
+    def test_tidy_form_def_includes_unknown_variables(self):
+        """Should include unknown variables with data that aren't in XLSForm."""
+        xlsform_path = self.fixtures.files["xlsform_unknown_variable"]
+        instances_path = xlsform_path
+        form_def = to_stata_xml.collate_xlsforms_by_form_id(
+            xlsform_path=xlsform_path)["xlsform"]
+        raw_data = to_stata_xml.collate_xform_instances(
+            instances_path=instances_path)
+        xform_data, unknown_vars = to_stata_xml.prepare_xform_data(
+            xform_instances=raw_data, form_def=form_def)
+        form_def = to_stata_xml.tidy_form_def(
+            form_id="xlsform", form_def=form_def, unknown_vars=unknown_vars)
+        self.assertIn("var_e", form_def)
+        self.assertIn("version", form_def)
+        self.assertNotIn("extra", form_def)
+        self.assertNotIn("settings", form_def)
+
+    def test_tidy_form_def_cleans_invalid_names_in_unknown_variables(self):
+        """Should remove invalid Stata identifier characters from varnames."""
+        xlsform_path = self.fixtures.files["xlsform_unknown_variable"]
+        instances_path = xlsform_path
+        form_def = to_stata_xml.collate_xlsforms_by_form_id(
+            xlsform_path=xlsform_path)["xlsform"]
+        raw_data = to_stata_xml.collate_xform_instances(
+            instances_path=instances_path)
+        xform_data, unknown_vars = to_stata_xml.prepare_xform_data(
+            xform_instances=raw_data, form_def=form_def)
+        form_def = to_stata_xml.tidy_form_def(
+            form_id="xlsform", form_def=form_def, unknown_vars=unknown_vars)
+        self.assertIn("id", form_def)
+
+    def test_prepare_xform_data_handles_date_conversion(self):
+        """Should convert ISO date to Stata elapsed date."""
+        xlsform_path = self.fixtures.files["xlsform_date_variable"]
+        instances_path = xlsform_path
+        form_def = to_stata_xml.collate_xlsforms_by_form_id(
+            xlsform_path=xlsform_path)["xlsform"]
+        raw_data = to_stata_xml.collate_xform_instances(
+            instances_path=instances_path)
+        xform_data, unknown_vars = to_stata_xml.prepare_xform_data(
+            xform_instances=raw_data, form_def=form_def)
+        var_ds = [x.get("var_d") for x in xform_data]
+        self.assertEqual("-5392", var_ds[0])
+        self.assertEqual("18494", var_ds[1])
+
+    def test_prepare_observations_includes_id_and_version_values(self):
+        """Should include form_id and form_version in observation data."""
+        xlsform_path = self.fixtures.files["xlsform_unknown_variable"]
+        instances_path = xlsform_path
+        form_def = to_stata_xml.collate_xlsforms_by_form_id(
+            xlsform_path=xlsform_path)["xlsform"]
+        raw_data = to_stata_xml.collate_xform_instances(
+            instances_path=instances_path)
+        xform_data, unknown_vars = to_stata_xml.prepare_xform_data(
+            xform_instances=raw_data, form_def=form_def)
+        form_def = to_stata_xml.tidy_form_def(
+            form_id="xlsform", form_def=form_def, unknown_vars=unknown_vars)
+        observations = to_stata_xml.prepare_observations(
+            xform_data=xform_data, form_def=form_def)
+        output_keys = [x["@varname"] for x in observations[0]["v"]]
+        self.assertIn("id", output_keys)
+        self.assertIn("version", output_keys)
+

@@ -4,7 +4,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 
-class TestGenerateImages(unittest.TestCase):
+class TestAggregateStata(unittest.TestCase):
 
     def setUp(self):
         self.fixtures = FixturePaths()

@@ -1,4 +1,4 @@
-from typing import List, Union, Dict, Iterable
+from typing import List, Union, Dict, Tuple
 from collections import OrderedDict, namedtuple, Counter
 from datetime import datetime
 from odk_aggregation_tool.aggregation import readers
@@ -6,6 +6,8 @@ import xmltodict
 from copy import copy
 import logging
 import os
+import re
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
@@ -21,10 +23,11 @@ type_mappings = [
     type_map('start',        'str26',    '%26s'),
     type_map('end',          'str26',    '%26s'),
     type_map('deviceid',     'str17',    '%17s'),
-    type_map('date',         'int',      '%tdnn/dd/CCYY'),
+    type_map('date',         'int',      '%td'),
     type_map('text',         'str2045',  '%30s'),
     type_map('integer',      'int',      '%10.0g')
 ]
+STATA_ZERO_DATE = datetime.strptime("1960-01-01", "%Y-%m-%d")
 
 
 def variable_type(var_name: str, stata_type: str) -> OrderedDict:
@@ -149,15 +152,17 @@ def to_stata_xml(xlsform_path: str, instances_path: str) -> Dict[str, str]:
 
     stata_docs = dict()
     for form_id, form_def in form_defs.items():
+        xform_instances = [x for x in instances if x["@id"] == form_id]
+        logger.info("Collecting data for form_id: {0}".format(form_id))
+        xform_data, unknown_vars = prepare_xform_data(
+            xform_instances=xform_instances, form_def=form_def)
+        form_def = tidy_form_def(
+            form_id=form_id, form_def=form_def, unknown_vars=unknown_vars)
+        observations = prepare_observations(
+            xform_data=xform_data, form_def=form_def)
         stata_metadata = prepare_xlsform_metadata(
             form_id=form_id, form_def=form_def)
-        xform_instances = [x for x in instances if x["@id"] == form_id]
-        variable_names = [x["@varname"] for x in stata_metadata["var_names"]]
-        nvar = str(len(variable_names))
-        logger.info("Collecting data for {0} "
-                    "variables for form_id: {1}".format(nvar, form_id))
-        observations = prepare_observations(
-            xform_instances=xform_instances, variable_names=variable_names)
+        nvar = str(len([x["@varname"] for x in stata_metadata["var_names"]]))
         nobs = str(len(observations))
         logger.info("Collected data for {0} "
                     "observations for form_id: {1}".format(nobs, form_id))
@@ -186,15 +191,20 @@ def collate_xlsforms_by_form_id(xlsform_path: str) -> DictODict:
     for form_id in unique_form_ids:
         form_defs = [x for x in read_xlsforms
                      if x["@settings"]["form_id"] == form_id]
+        versions = sorted(set(x["@settings"]["version"] for x in form_defs),
+                          reverse=True)
+        logger.info("Reading XLSForms for form_id: {0}, sorted by version "
+                    "in order of: {1}".format(form_id, versions))
         sorted_form_defs = sorted(
-            form_defs, key=lambda x: x["@settings"]["version"])
+            form_defs, key=lambda x: x["@settings"]["version"], reverse=True)
         master_form_def = OrderedDict()
 
         for xlsform in sorted_form_defs:
             if master_form_def.get("@settings") is None:
                 master_form_def["@settings"] = xlsform["@settings"]
             for k, v in xlsform.items():
-                if v.get("type") not in ["begin group", "end group", None]:
+                ignoreable = v.get("type") in ["begin group", "end group", None]
+                if not ignoreable and k not in master_form_def:
                     master_form_def[k] = v
         form_dict[form_id] = master_form_def
     return form_dict
@@ -208,21 +218,13 @@ def prepare_xlsform_metadata(form_id: str, form_def: OrderedDict) -> DictODict:
     form_def_items = copy(form_def)
     form_def_items.pop("@settings")
     form_default_lang = form_def["@settings"].get("default_language")
-    logger.info("Using default language: {0}, for metadata "
-                "with form_id: {1}".format(form_default_lang, form_id))
-    form_def_items = add_source_file_field(
-        form_id=form_id, form_def_items=form_def_items)
-
+    if form_default_lang is not None:
+        logger.info(
+            "Using default language: {0}, for metadata "
+            "with form_id: {1}".format(form_default_lang, form_id))
     choices_added = list()
     for k, v in form_def_items.items():
         var_type = v.get('type', '')
-        if v.get("readonly") == "yes" and k.startswith("nl_") \
-                and var_type == "text":
-            logger.info("Skipped adding metadata for an variable assumed to "
-                        "be a labelling variable (type=text, readonly, and "
-                        "name starts with 'nl_'). "
-                        "Form_id: {0}, variable name: {1}".format(form_id, k))
-            continue
         label_column = maybe_language_column(
             metadata_name='label', language_name=form_default_lang)
         if var_type.startswith('select'):
@@ -237,8 +239,6 @@ def prepare_xlsform_metadata(form_id: str, form_def: OrderedDict) -> DictODict:
                         label_column=label_column))
                     choices_added.append(choices_name)
                 var_type = 'integer'
-            else:
-                var_type = 'text'
         type_mapping = next(
             (x for x in type_mappings if x.xlsform_type == var_type), '')
         metadata["var_names"].append(variable_name(var_name=k))
@@ -251,20 +251,6 @@ def prepare_xlsform_metadata(form_id: str, form_def: OrderedDict) -> DictODict:
             var_name=k, description=v.get(
                 'name_description', label_column_value)))
     return metadata
-
-
-def add_source_file_field(
-        form_id: str, form_def_items: OrderedDict) -> OrderedDict:
-    if "_source_file" not in form_def_items:
-        form_def_items["_source_file"] = OrderedDict([
-            ("name", "_source_file"), ("type", "text"),
-            ("name_description", "Path to file that the data was read from.")])
-        logger.info("Added '_source_file' field to metadata "
-                    "for form_id: {0}.".format(form_id))
-    else:
-        logger.info("Field for '_source_file' not added, one exists "
-                    "already for form_id: {0}".format(form_id))
-    return form_def_items
 
 
 def maybe_language_column(metadata_name: str,
@@ -285,18 +271,100 @@ def collate_xform_instances(instances_path: str) -> ListODict:
         parsed_data["_source_file"] = os.path.normpath(file_path)
         parsed_data["_source_xml"] = xml_data
         parsed.append(parsed_data)
-    flattened = [readers.flatten_dict_leaf_nodes(x) for x in parsed]
+    flattened = list()
+    remove_keys = list()
+    for instance in parsed:
+        flat = readers.flatten_dict_leaf_nodes(instance)
+        for k in flat.keys():
+            if k.startswith("@") and k not in ["@id", "@version"]:
+                if k not in remove_keys:
+                    remove_keys.append(k)
+        for k in remove_keys:
+            if k in flat.keys():
+                del flat[k]
+        flattened.append(flat)
+    if len(remove_keys) > 0:
+        logger.info(
+            "Removed XML attributes from parsed data, for the following "
+            "keys that were neither '@id' (form id) or '@version' "
+            "(form version):\n{0}".format(", ".join(remove_keys)))
     return flattened
 
 
-def prepare_observations(xform_instances: ListODict,
-                         variable_names: List) -> ListODict:
-    """Return a list of observation values filtered for the named variables."""
-    observations = list()
+def prepare_xform_data(
+        xform_instances: ListODict,
+        form_def: OrderedDict) -> Tuple[ListODict, List[str]]:
+    """Return a list of observation values. Convert dates to Stata format."""
+    exclude_variables = ["_source_xml"]
+    unknown_vars = list()
+    prepared_instances = list()
     for instance in xform_instances:
+        for k, v in form_def.items():
+            if k == "@settings":
+                continue
+            elif k not in instance.keys():
+                # Expand all missing items so Stata considers them missing.
+                instance[k] = None
+            elif v.get("type") is not None:
+                # Convert dates to string integers using Stata's SIF.
+                if v["type"] == "date" and instance[k] is not None:
+                    date_parse = datetime.strptime(instance[k], "%Y-%m-%d")
+                    instance[k] = str((date_parse - STATA_ZERO_DATE).days)
+        for k, v in instance.items():
+            key_ok = k not in form_def.keys() and k not in exclude_variables
+            if key_ok and v is not None:
+                unknown_vars.append(re.sub("[^A-z0-9_]", "", k))
+        new_instance = OrderedDict(
+            (re.sub("[^A-z0-9_]", "", k), v) for k, v in instance.items())
+        prepared_instances.append(new_instance)
+    return prepared_instances, unknown_vars
+
+
+def tidy_form_def(form_id: str, form_def: OrderedDict, unknown_vars: List[str]
+                  ) -> OrderedDict:
+    """Remove label variables and add unknown variables to form definition."""
+    if len(unknown_vars) > 0:
+        unknown_vars = sorted(set(unknown_vars))
+        logger.info(
+            "Data was read for the following variables, but there was no "
+            "metadata for them in the XLSForms that were read. Now attempting "
+            "to add these variables to the form metadata for output. "
+            "Form_id: {0}, variable names:\n{1}".format(
+             form_id, ", ".join(unknown_vars)))
+        added_vars = list()
+        for var in unknown_vars:
+            if var not in form_def:
+                form_def[var] = OrderedDict([
+                    ("name", var), ("type", "text"),
+                    ("name_description", "{0} (Unknown variable)".format(var))])
+                added_vars.append(var)
+        logger.info(
+            "Metadata added to form_id {0} for the following unknown "
+            "variables:\n{1}".format(form_id, ", ".join(added_vars)))
+    remove_keys = list()
+    for k, v in form_def.items():
+        is_label_var = v.get("read_only") == "yes" and v.get("type") == "text"
+        if is_label_var:
+            remove_keys.append(k)
+    if len(remove_keys) > 0:
+        for k in remove_keys:
+            if k in form_def:
+                del form_def[k]
+        logger.info(
+            "Removed variable metadata for the following fields assumed to "
+            "be empty labelling variables (type=text and read_only=yes). "
+            "Form_id: {0}, variable names:\n{1}".format(
+             form_id, ", ".join(remove_keys)))
+    return form_def
+
+
+def prepare_observations(
+        xform_data: ListODict, form_def: OrderedDict) -> ListODict:
+    observations = list()
+    for instance in xform_data:
         var_values = list()
         for k, v in instance.items():
-            if k in variable_names:
+            if k in form_def.keys():
                 var_values.append(observation_value(var_name=k, var_value=v))
         observations.append(OrderedDict([('v', var_values)]))
     return observations
@@ -318,10 +386,11 @@ def choice_data_type_is_integer(choice_list: List[Dict]) -> bool:
         try:
             choice["name"] = int(choice["name"])
         except ValueError:
-            logger.warning("Found non-integer value in choice list: "
-                           "{0}, value: {1}. All values in this choice "
-                           "list will be output as text.".format(
-                            choice["list_name"], choice["name"]))
+            logger.warning(
+                "Found non-integer value in choice list: {0}, value: {1}. "
+                "Variables using this choice list will not have labelling "
+                "applied as Stata only allows labelling integer "
+                "values.".format(choice["list_name"], choice["name"]))
             return False
     return True
 
@@ -337,9 +406,8 @@ def remove_duplicate_instances(instances: ListODict) -> ListODict:
             dupe_paths.append(dupe.get("_source_file"))
             if i > 0:
                 instances.remove(dupe)
-        log_msg = "Found duplicate XML files. Only data from the first " \
-                  "file listed below will be included in the output. \n" \
-                  "Count: {0},\n" \
-                  "Source files:\n{1}".format(v, '\n'.join(dupe_paths))
-        logger.warning(log_msg)
+        logger.warning(
+            "Found duplicate XML files. Only data from the first file listed "
+            "below will be included in the output. Duplicates found: {0},\n"
+            "Source files:\n{1}".format(v, '\n'.join(dupe_paths)))
     return instances

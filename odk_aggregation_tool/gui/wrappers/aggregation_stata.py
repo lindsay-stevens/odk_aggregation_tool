@@ -3,6 +3,7 @@ from odk_aggregation_tool.gui.log_capturing_handler import CapturingHandler
 import logging
 from odk_aggregation_tool.aggregation import to_stata_xml
 import os
+import traceback
 
 
 def wrapper(xlsforms_path, xforms_path, output_path):
@@ -36,7 +37,7 @@ def wrapper(xlsforms_path, xforms_path, output_path):
             result = "{0}\n\n{1}".format(message, result)
     except Exception as e:
         header = "Aggregation to Stata XML task not completed. Error(s) below."
-        content = str(e)
+        content = "{0}\n\n{1}".format(str(e), ''.join(traceback.format_exc()))
         result = utils.format_output(header=header, content=content)
     finally:
         # If not definitely removed, no messages will be shown on re-run,
